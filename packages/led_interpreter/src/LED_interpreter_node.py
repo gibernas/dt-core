@@ -5,12 +5,11 @@ import time
 from std_msgs.msg import Byte
 from duckietown_msgs.msg import FSMState, Vector2D, AprilTagDetection, AprilTagDetectionArray, LEDDetection, LEDDetectionArray, LEDDetectionDebugInfo, SignalsDetection 
 from sensor_msgs.msg import CompressedImage
-#from duckietown_utils.bag_logs import numpy_from_ros_compressed
-#import numpy as np
 
-#this is a stup for traffic light testing
+# from duckietown_utils.bag_logs import numpy_from_ros_compressed
 
-class LEDInterpreterNode(object):
+
+class LEDInterpreterNode(DTROS):
 	def __init__(self):
 
 		self.node = rospy.init_node('LED_interpreter_node',anonymous=True)
@@ -147,4 +146,13 @@ if __name__ == '__main__':
     interpreternode = LEDInterpreterNode()
     rospy.on_shutdown(interpreternode.onShutdown)
     rospy.spin()
+
+	# Initialize the node
+	led_interpreter_node = LEDInterpreterNode(node_name='led_interoreter_node')
+	# Setup proper shutdown behavior
+	rospy.on_shutdown(interpreternode.onShutdown)
+	# Keep it spinning to keep the node alive
+
+	rospy.spin()
+
 

@@ -16,8 +16,9 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt4agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt4agg import NavigationToolbar2QT as NavigationToolbar
 
-## Aux
+# Aux
 gray_color_table = [qRgb(i, i, i) for i in range(256)]
+
 
 def toQImage(im, copy=False):
     if im is None:
@@ -42,17 +43,19 @@ def toQImage(im, copy=False):
 # For multithread-safe
 QCoreApplication.setAttribute(Qt.AA_X11InitThreads)
 
+
 class plotWin(QDialog):
     def __init__(self, parent = None):
         super(plotWin, self).__init__(parent)
         self.figure = plt.figure()
-        self.canvas = FigureCanvas(self.figure)# set the layout
+        self.canvas = FigureCanvas(self.figure)  # set the layout
         self.toolbar = NavigationToolbar(self.canvas, self)
 
         layout = QVBoxLayout()
         layout.addWidget(self.toolbar)
         layout.addWidget(self.canvas)
         self.setLayout(layout)
+
 
 class LEDWindow(QWidget):
     progress = pyqtSignal(bool, float)
@@ -280,6 +283,7 @@ class LEDWindow(QWidget):
 app = QApplication(sys.argv)
 win = LEDWindow(None)
 
+
 class LEDVisualizerNode(object):
     def __init__(self):
         self.first_timestamp = None
@@ -316,17 +320,18 @@ class LEDVisualizerNode(object):
         win.updateResults(msg)
 
     def cam_callback(self, msg):
-        #print('Received camera image)
+        # print('Received camera image)
         npimg = numpy_from_ros_compressed(msg)
         win.camera_image = toQImage(npimg)
         win.update()
 
     def heartbeat_timer(self, event):
-        if(time.time()-self.node_last_seen>1.5):
+        if time.time() - self.node_last_seen > 1.5:
             win.updateState(LEDDetectionDebugInfo(), False)
 
-rospy.init_node('LED_visualizer_node',anonymous=False)
+
+rospy.init_node('LED_visualizer_node', anonymous=False)
 node = LEDVisualizerNode()
-#rospy.spin() # not quite needed for callbacks in python?
+# rospy.spin() # not quite needed for callbacks in python?
 win.show()
 sys.exit(app.exec_())
