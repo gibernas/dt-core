@@ -1,4 +1,3 @@
-mode_topic: "fsm_node/mode"
 source_topics: #Mapping from cmd source name to topics
   coordination: "simple_coordinator_node/change_color_pattern"
   joystick: "led_joy_mapper_node/change_color_pattern"

@@ -21,6 +21,7 @@ last_ms_p = 0
 
 auto_restart = False
 
+
 def loop():
     global last_ms, time_to_wait, last_ms_p
     veh_standing = True
@@ -29,9 +30,9 @@ def loop():
 
         ms_now = int(round(time.time() * 1000))
         if ms_now - last_ms > time_to_wait:
-            #query rosmaster status, which will raise socket.error when failure
+            # query rosmaster status, which will raise socket.error when failure
             rospy.get_master().getSystemState()
-            #end-of-checking
+            # end-of-checking
             last_ms = ms_now
 
 
@@ -87,10 +88,6 @@ def loop():
         if keys[pygame.K_s]:
             msg.buttons[6] = 1
 
-        # toggle anti-instagram
-        if keys[pygame.K_i]:
-            msg.buttons[3] = 1
-
         ## key/action for quitting the program
 
         # check if top left [x] was hit
@@ -132,7 +129,7 @@ def loop():
 def prepare_dpad():
     global dpad, dpad_f, dpad_r, dpad_b, dpad_l
     file_dir = os.path.dirname(__file__)
-    file_dir = (file_dir + "/") if  (file_dir) else ""
+    file_dir = (file_dir + "/") if file_dir else ""
 
     dpad = pygame.image.load(file_dir + "../images/d-pad.png")
     dpad = pygame.transform.scale(dpad, (screen_size, screen_size))
@@ -143,8 +140,9 @@ def prepare_dpad():
     dpad_b = pygame.transform.rotate(dpad_pressed, 180)
     dpad_l = pygame.transform.rotate(dpad_pressed, 90)
 
-# Hint which is print at startup in console
+
 def print_hint():
+    """Hint which is print at startup in console"""
     print("\n\n\n")
     print("Virtual Joystick for your Duckiebot")
     print("-----------------------------------")
@@ -153,7 +151,6 @@ def print_hint():
     print("         [q]:    Quit the program")
     print("         [a]:    Start lane-following a.k.a. autopilot")
     print("         [s]:    Stop lane-following")
-    print("         [i]:    Toggle anti-instagram")
     print("\n")
 
 
@@ -176,13 +173,13 @@ if __name__ == '__main__':
     logo = pygame.image.load(file_dir + "../images/logo.png")
 
     pygame.display.set_icon(logo)
-    screen = pygame.display.set_mode((screen_size,screen_size))
+    screen = pygame.display.set_mode((screen_size, screen_size))
     pygame.display.set_caption(veh_name)
 
     prepare_dpad()
 
     # prepare ROS node
-    rospy.init_node('virtual_joy',anonymous=False)
+    rospy.init_node('virtual_joy', anonymous=False)
 
     # prepare ROS publisher
     pub_joystick = rospy.Publisher("/" + str(veh_name) + "/joy", Joy, queue_size=1)

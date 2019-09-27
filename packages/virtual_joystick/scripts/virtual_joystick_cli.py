@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# license removed for brevity
+# license removed for brevity TODO: figure out what this is
 import rospy
 import sys
 
