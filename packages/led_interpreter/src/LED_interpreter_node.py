@@ -126,5 +126,3 @@ if __name__ == '__main__':
     rospy.on_shutdown(led_interpreter_node.onShutdown)
     # Keep it spinning to keep the node alive
     rospy.spin()
-
-

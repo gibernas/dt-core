@@ -53,22 +53,22 @@ class AntiInstagramNode(DTROS):
         self.image = None
 
         rospy.Timer(rospy.Duration(self.parameters['~ai_interval']), self.calculate_new_parameters)
-        
+
         self.uncorrected_image_subscriber = rospy.Subscriber(
-                                                '~uncorrected_image/compressed', 
-                                                CompressedImage, 
+                                                '~uncorrected_image/compressed',
+                                                CompressedImage,
                                                 self.process_image,
-                                                buff_size=921600, 
+                                                buff_size=921600,
                                                 queue_size=1)
 
         self.corrected_image_publisher = rospy.Publisher(
-                                             "~corrected_image/compressed", 
-                                             CompressedImage, 
+                                             "~corrected_image/compressed",
+                                             CompressedImage,
                                              queue_size=1)
 
         self.log("Initialized.")
 
-    def process_image(self, image_msg):        
+    def process_image(self, image_msg):
         try:
             self.image_lock.acquire()
             image = bgr_from_jpg(image_msg.data)
@@ -79,7 +79,7 @@ class AntiInstagramNode(DTROS):
             self.image_lock.release()
             return
 
-        color_balanced_image = self.ai.apply_color_balance(image, 
+        color_balanced_image = self.ai.apply_color_balance(image,
                                    self.parameters['~scale_percent'])
 
         if color_balanced_image is None:
@@ -88,7 +88,7 @@ class AntiInstagramNode(DTROS):
 
         corrected_image = self.bridge.cv2_to_compressed_imgmsg(
                               color_balanced_image)
-        corrected_image.header.stamp = image_msg.header.stamp           
+        corrected_image.header.stamp = image_msg.header.stamp
         self.corrected_image_publisher.publish(corrected_image)
 
     def calculate_new_parameters(self, event):
@@ -100,10 +100,10 @@ class AntiInstagramNode(DTROS):
             self.log("[%s] Waiting for first image!" % self.node_name)
             return
 
-        self.ai.calculate_color_balance_thresholds(image, 
+        self.ai.calculate_color_balance_thresholds(image,
                                                    self.parameters['~resize'],
                                                    self.parameters['~cb_percentage'])
-        
+
         self.log("[%s] New parameters computed" % self.node_name)
 
     def setup_parameter(self, param_name, default_value):

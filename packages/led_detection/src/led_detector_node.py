@@ -217,7 +217,7 @@ class LEDDetectorNode(DTROS):
         blobs_tl, frame_tl = self.detect_blobs(img_tl)
 
         radius = self.DTOL/2.0
-        
+
         # Extract blobs
         keypoint_blob_right = self.extract_blobs(blobs_right, radius)
         keypoint_blob_front = self.extract_blobs(blobs_front, radius)
@@ -345,7 +345,7 @@ class LEDDetectorNode(DTROS):
         fft_peak_freq = 1.0*np.argmax(y_f)/(num_img*t_s)
         # half_freq_dist = 0.8 #1.0*f[1]/2
 
-        # self.log('[%s] Appearance perceived. = %s, frequency = %s' % 
+        # self.log('[%s] Appearance perceived. = %s, frequency = %s' %
         #          (self.node_name, appearance_percentage, fft_peak_freq))
         freq_identified = 0
         # Take decision
@@ -425,4 +425,3 @@ if __name__ == '__main__':
     camera_node = LEDDetectorNode(node_name='led_detector_node')
     # Keep it spinning to keep the node alive
     rospy.spin()
-

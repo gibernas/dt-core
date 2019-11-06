@@ -138,4 +138,3 @@ if __name__ == '__main__':
     rospy.on_shutdown(vehicle_avoidance_control_node.on_shutdown)
     # Keep it spinning to keep the node alive
     rospy.spin()
-
