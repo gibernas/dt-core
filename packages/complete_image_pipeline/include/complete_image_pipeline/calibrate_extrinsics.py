@@ -30,7 +30,10 @@ class CalibrateExtrinsics(D8App):
         params.add_string('output', default=None, short='-o', help='Output directory', group=g)
 
     def go(self):
+        robot_name = dtu.get_current_robot_name()
+
         output = self.options.output
+
         if output is None:
             output = 'out-calibrate-extrinsics'  #  + dtu.get_md5(self.options.image)[:6]
             self.info('No --output given, using %s' % output)
@@ -43,7 +46,33 @@ class CalibrateExtrinsics(D8App):
             self.info('Taking a picture. Say cheese!')
 
             bgr = dtu.bgr_from_raspistill(out)
+
             self.info('Picture taken: %s ' % str(bgr.shape))
+
+        elif self.options.input is 'ROS':
+
+            print("{}\nCalibrating using the ROS image stream...\n".format("*"*20))
+            import rospy
+            from sensor_msgs.msg import CompressedImage
+
+            topic_name = os.path.join('/', robot_name, 'camera_node/image/compressed')
+            print('Topic to listen to is: %s' % topic_name)
+
+            print('Let\'s wait for an image!')
+            img_msg = None
+
+            rospy.init_node('test')
+
+            try:
+                img_msg = rospy.wait_for_message(topic_name, CompressedImage, timeout=10)
+                print('Image captured!')
+
+            except rospy.ROSException as e:
+                print('Didn\'t get any message!: %s' % (e,))
+
+            bgr = dtu.bgr_from_rgb(dtu.rgb_from_ros(img_msg))
+
+
         else:
             self.info('Loading input image %s' % self.options.input)
             bgr = dtu.bgr_from_jpg_fn(self.options.input)
@@ -53,7 +82,6 @@ class CalibrateExtrinsics(D8App):
             bgr = dtu.d8_image_resize_fit(bgr, 640, interpolation)
             self.info('Resized to: %s ' % str(bgr.shape))
 
-        robot_name = dtu.get_current_robot_name()
         disable_old_homography(robot_name)
 
         camera_info = get_camera_info_for_robot(robot_name)
