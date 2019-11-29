@@ -1,156 +1,135 @@
 #!/usr/bin/env python
 import rospy
 import time
-from led_detection.LEDDetector import LEDDetector
+import numpy as np
+import cv2
+from cv_bridge import CvBridge, CvBridgeError
+import scipy.fftpack
+
+from duckietown_utils.bag_logs import numpy_from_ros_compressed
+
 from std_msgs.msg import Byte
 from duckietown_msgs.msg import Vector2D, LEDDetection, LEDDetectionArray, LEDDetectionDebugInfo, BoolStamped, SignalsDetection
 from sensor_msgs.msg import CompressedImage, Image
-from std_msgs.msg import String
-from duckietown_utils.bag_logs import numpy_from_ros_compressed
-import numpy as np
-import cv2
-import scipy.fftpack
-from cv_bridge import CvBridge, CvBridgeError
 
-class LEDDetectorNode(object):
-    def __init__(self):
-        self.active = True # [INTERACTIVE MODE] Won't be overwritten if FSM isn't running, node always active
-        self.first_timestamp = 0
-        self.capture_finished = True
-        self.tinit = None
-        self.trigger = True
-        self.node_state = 0
-        self.data = []
+
+class LEDDetectorNode(DTROS):
+    def __init__(self, node_name):
+
+        # Initialize the DTROS parent class
+        super(LEDDetectorNode, self).__init__(node_name=node_name)
 
         # Needed to publish images
         self.bridge = CvBridge()
 
-        # Node name
-        self.node_name = rospy.get_name()
+        # Add the node parameters to the parameters dictionary
+        self.parameters['~capture_time'] = None
+        self.parameters['~DTOL'] = None
+        self.parameters['~useFFT'] = None
+        self.parameters['~freqIdentity'] = None
+        self.parameters['~crop_params'] = None
+        self.parameters['~blob_detector_DB'] = None
+        self.parameters['~blob_detector_tl'] = None
+        self.updateParameters()
 
-        # Capture time
-        self.capture_time = 0.5
+        self.active = True  # [INTERACTIVE MODE] Won't be overwritten if FSM isn't running, node always active
+        self.first_timestamp = 0
+        self.capture_finished = True
+        self.t_init = None
+        self.trigger = True
+        self.node_state = 0
+        self.data = []
 
-        # Parameters
-        self.DTOL = 15
+        # Initialize detection
+        self.right = SignalsDetection.NO_CAR
+        self.front = SignalsDetection.NO_CAR
+        self.traffic_light = SignalsDetection.NO_TRAFFIC_LIGHT
+        self.left = "UNKNOWN"
 
-        # Use FFT or heuristics
-        self.useFFT = True
-        self.freqIdentify = []
+        # Create Blob detector parameter objects
+        bd_param_db = cv2.SimpleBlobDetector_Params()
+        bd_param_tl = cv2.SimpleBlobDetector_Params()
 
-        # Cropping
-        self.cropNormalizedRight = [[0.1,0.67],[0.6,1.0]]
-        self.cropNormalizedFront = [[0.1,0.5],[0.13,0.5]]
-        self.cropNormalizedTL    = [[0.0,0.25],[0.25,0.75]]
-
-        # Setup SimpleBlobDetector parameters
-        params = cv2.SimpleBlobDetector_Params()  # Change thresholds
-        params.minThreshold = 5
-        # params.maxThreshold = 200
-        params.maxThreshold = 75
-        params.thresholdStep = 10
-
-        # Filter by Area.
-        params.filterByArea = True
-        params.minArea = 10*10*3.14
-        params.maxArea = 20*20*3.14
-
-        # Filter by Circularity
-        params.filterByCircularity = True
-        params.minCircularity = 0.8
-
-        # Filter by Convexity
-        params.filterByConvexity = True
-        params.minConvexity = 0.8
-
-        # Filter by Inertia
-        params.filterByInertia = False
-        params.minInertiaRatio = 0.05
-
-        # Parameters
-        params_car = params
-        params_tl  = params
-
-        # Change parameters for the traffic light
-        params_tl.minArea = 5*5*3.14
-        params_tl.maxArea = 15*15*3.14
+        # Assign values to object variables
+        for key, val in self.parameters['blob_detector_db'].items():
+            setattr(bd_param_db, key, val)
+        for key, val in self.parameters['blob_detector_tl'].items():
+            setattr(bd_param_tl, key, val)
 
         # Create a detector with the parameters
-        self.detector_car = cv2.SimpleBlobDetector_create(params_car)
-        self.detector_tl  = cv2.SimpleBlobDetector_create(params_tl)
+        self.detector_car = cv2.SimpleBlobDetector_create(bd_param_db)
+        self.detector_tl = cv2.SimpleBlobDetector_create(bd_param_tl)
 
-        # Publish
-        self.pub_raw_detections = rospy.Publisher("~raw_led_detection",LEDDetectionArray,queue_size=1)
-        self.pub_image_right    = rospy.Publisher("~image_detection_right",Image,queue_size=1)
-        self.pub_image_front    = rospy.Publisher("~image_detection_front", Image, queue_size=1)
-        self.pub_image_TL       = rospy.Publisher("~image_detection_TL", Image, queue_size=1)
-        self.pub_detections     = rospy.Publisher("~led_detection", SignalsDetection, queue_size=1)
-        self.pub_debug          = rospy.Publisher("~debug_info",LEDDetectionDebugInfo,queue_size=1)
-        self.veh_name           = rospy.get_namespace().strip("/")
+        # Publishers
+        self.pub_raw_detections = rospy.Publisher("~raw_led_detection", LEDDetectionArray,queue_size=1)
+        self.pub_image_right = rospy.Publisher("~image_detection_right", Image, queue_size=1)
+        self.pub_image_front = rospy.Publisher("~image_detection_front", Image, queue_size=1)
+        self.pub_image_TL = rospy.Publisher("~image_detection_TL", Image, queue_size=1)
+        self.pub_detections = rospy.Publisher("~led_detection", SignalsDetection, queue_size=1)
+        self.pub_debug = rospy.Publisher("~debug_info", LEDDetectionDebugInfo, queue_size=1)
 
-        # Subscribed
-        self.sub_cam    = rospy.Subscriber("camera_node/image/compressed", CompressedImage, self.camera_callback)
-        self.sub_trig   = rospy.Subscriber("~trigger",Byte, self.trigger_callback)
-        self.sub_switch = rospy.Subscriber("~switch",BoolStamped,self.cbSwitch)
+        # Subscribers
+        self.sub_cam = rospy.Subscriber("camera_node/image/compressed", CompressedImage, self.camera_callback)
+        self.sub_trig = rospy.Subscriber("~trigger", Byte, self.trigger_callback)
+        self.sub_switch = rospy.Subscriber("~switch", BoolStamped, self.cbSwitch)
 
         # Additional parameters
-        self.protocol            = rospy.get_param("~LED_protocol")
-        #self.capture_time         = rospy.get_param("~capture_time")
-        self.continuous           = rospy.get_param('~continuous', False) # Detect continuously as long as active
-                                                               # [INTERACTIVE MODE] set to False for manual trigger
+        self.protocol = rospy.get_param("~LED_protocol")
+
+        # Detect continuously as long as active [INTERACTIVE MODE] set to False for manual trigger
+        self.continuous = rospy.get_param('~continuous', False)
+
         # Cell size (needed for visualization)
-        self.cell_size      = rospy.get_param("~cell_size")
+        self.cell_size = rospy.get_param("~cell_size")
         self.crop_rect_norm = rospy.get_param("~crop_rect_normalized")
 
-        # Get frequency to indentify
-        self.freqIdentify = [self.protocol['signals']['CAR_SIGNAL_A']['frequency'],
-                             self.protocol['signals']['CAR_SIGNAL_PRIORITY']['frequency'],
-                             self.protocol['signals']['CAR_SIGNAL_SACRIFICE_FOR_PRIORITY']['frequency']]
-        #print '---------------------------------------------------------------'
-        #print self.freqIdentify
-        #print '---------------------------------------------------------------'
-
-        #rospy.loginfo('[%s] Config: \n\t crop_rect_normalized: %s, \n\t capture_time: %s, \n\t cell_size: %s'%(self.node_name, self.crop_rect_normalized, self.capture_time, self.cell_size))
+        # Get frequency to identify
+        self.freqIdentify = self.protocol['frequencies'].values()
 
         # Check vehicle name
+        self.veh_name = rospy.get_namespace().strip("/")
         if not self.veh_name:
             # fall back on private param passed thru rosrun
             # syntax is: rosrun <pkg> <node> _veh:=<bot-id>
             if rospy.has_param('~veh'):
                 self.veh_name = rospy.get_param('~veh')
 
-        if not self.veh_name:
-            raise ValueError('Vehicle name is not set.')
+            else:
+                raise ValueError('Vehicle name is not set.')
 
-        # Loginfo
-        rospy.loginfo('[%s] Vehicle: %s'%(self.node_name, self.veh_name))
-        rospy.loginfo('[%s] Waiting for camera image...' %self.node_name)
+        # Log info
+        self.log('[%s] Vehicle: %s' % (self.node_name, self.veh_name))
+        self.log('[%s] Waiting for camera image...' % self.node_name)
 
-    def cbSwitch(self, switch_msg): # active/inactive switch from FSM
+    def cbSwitch(self, switch_msg):
+        """Callback that turns on/off the node.
+            Reads the switch from the Finite State Machine and sets
+            self.active accordingly.
+            Args:
+                switch_msg (BoolStamped): Switch for the node.
+        """
         self.active = switch_msg.data
-        if self.active:
-            self.trigger = True
 
     def camera_callback(self, msg):
         if not self.active:
             return
 
         float_time = msg.header.stamp.to_sec()
-        debug_msg  = LEDDetectionDebugInfo()
+        debug_msg = LEDDetectionDebugInfo()
 
         if self.trigger:
-            #rospy.loginfo('[%s] GOT TRIGGER! Starting...')
-            self.trigger          = False
-            self.data             = []
+            # self.log('[%s] GOT TRIGGER! Starting...')
+            self.trigger = False
+            self.data = []
             self.capture_finished = False
             # Start capturing images
-            #rospy.loginfo('[%s] Start capturing frames'%self.node_name)
+            # self.log('[%s] Start capturing frames'%self.node_name)
             self.first_timestamp = msg.header.stamp.to_sec()
-            self.tinit           = time.time()
+            self.t_init = time.time()
 
         elif self.capture_finished:
             self.node_state = 0
-            #rospy.loginfo('[%s] Waiting for trigger...' %self.node_name)
+            # self.log('[%s] Waiting for trigger...' %self.node_name)
 
         if self.first_timestamp > 0:
             # TODO sanity check rel_time positive, restart otherwise
@@ -161,181 +140,94 @@ class LEDDetectorNode(object):
                 self.node_state = 1
                 # Capture image
                 rgb = numpy_from_ros_compressed(msg)
-                rgb = cv2.cvtColor(rgb,cv2.COLOR_BGRA2GRAY)
+                rgb = cv2.cvtColor(rgb, cv2.COLOR_BGRA2GRAY)
                 rgb = cv2.resize(rgb, (640 * 1, 480 * 1))
                 rgb = 255 - rgb
-                #rospy.loginfo('[%s] Capturing frame %s' %(self.node_name, rel_time))
+                # self.log('[%s] Capturing frame %s' %(self.node_name, rel_time))
                 # Save image to data
-                #if np.size(self.data) == 0:
+                # if np.size(self.data) == 0:
                 #    self.data = rgb
-                #else:
+                # else:
                 #    self.data = np.dstack((self.data,rgb))
-                self.data.append({'timestamp': float_time, 'rgb': rgb[:,:]})
-                debug_msg.capture_progress = 100.0*rel_time/self.capture_time
+                self.data.append({'timestamp': float_time, 'rgb': rgb[:, :]})
+                debug_msg.capture_progress = 100.0 * rel_time / self.capture_time
 
             # Start processing
             elif not self.capture_finished and self.first_timestamp > 0:
-                #rospy.loginfo('[%s] Relative Time %s, processing' %(self.node_name, rel_time))
+                # self.log('[%s] Relative Time %s, processing' %(self.node_name, rel_time))
                 self.node_state = 2
                 self.capture_finished = True
                 self.first_timestamp = 0
-                self.sub_cam.unregister() # IMPORTANT! Explicitly ignore messages
-                                          # while processing, accumulates delay otherwise!
+
+                # IMPORTANT! Explicitly ignore messages while processing, accumulates delay otherwise!
+                self.sub_cam.unregister()
+
                 self.send_state(debug_msg)
                 # Process image and publish results
                 self.process_and_publish()
 
-        self.send_state(debug_msg) # TODO move heartbeat to dedicated thread
+        self.send_state(debug_msg)  # TODO move heartbeat to dedicated thread
 
     def trigger_callback(self, msg):
         self.trigger = True
 
-
-    def crop_image(self,images,cropNorm):
+    def crop_image(self, images, crop_norm):
         # Get size
-        H,W,_ = images.shape
+        height, width, = images.shape
         # Compute indices
-        hStart = int(np.floor(H*cropNorm[0][0]))
-        hEnd   = int(np.ceil(H*cropNorm[0][1]))
-        wStart = int(np.floor(W*cropNorm[1][0]))
-        wEnd   = int(np.ceil(W*cropNorm[1][1]))
+        h_start = int(np.floor(height * crop_norm[0][0]))
+        h_end = int(np.ceil(height * crop_norm[0][1]))
+        w_start = int(np.floor(width * crop_norm[1][0]))
+        w_end = int(np.ceil(width * crop_norm[1][1]))
         # Crop image
-        imageCropped = images[hStart:hEnd,wStart:wEnd,:]
+        image_cropped = images[h_start:h_end, w_start:w_end, :]
         # Return cropped image
-        return imageCropped
+        return image_cropped
 
     def process_and_publish(self):
         # Initial time
         tic = time.time()
 
         # Get dimensions
-        H,W = self.data[0]['rgb'].shape
-        NIm = len(self.data)
+        h, w = self.data[0]['rgb'].shape
+        num_img = len(self.data)
 
         # Save in proper vectors
-        images     = np.zeros((H,W,NIm),dtype=np.uint8)
-        timestamps = np.zeros((NIm))
+        images = np.zeros((h, w, num_img), dtype=np.uint8)
+        timestamps = np.zeros(num_img)
         for i, v in enumerate(self.data):
             timestamps[i] = v['timestamp']
-            images[:,:,i] = v['rgb']
+            images[:, :, i] = v['rgb']
 
         # Crop images
-        imRight = self.crop_image(images,self.cropNormalizedRight)
-        imFront = self.crop_image(images,self.cropNormalizedFront)
-        imTL    = self.crop_image(images,self.cropNormalizedTL)
-
-        # Allocate space
-        FrameRight = []
-        BlobsRight = []
-        FrameFront = []
-        BlobsFront = []
-        FrameTL    = []
-        BlobsTL    = []
+        img_right = self.crop_image(images, self.parameters['crop_params']['cropNormalizedRight'])
+        img_front = self.crop_image(images, self.parameters['crop_params']['cropNormalizedFront'])
+        img_tl = self.crop_image(images, self.parameters['crop_params']['cropNormalizedTL'])
 
         # Print on screen
-        #rospy.loginfo('[%s] Analyzing %s images of size %s X %s' %(self.node_name,NIm,W,H))
+        # self.log('[%s] Analyzing %s images of size %s X %s' %(self.node_name,num_img,w,h))
 
-        # Iterate
-        for t in range(NIm):
-            # Iterate Right
-            # Detect blobs.
-            keypoints = self.detector_car.detect(imRight[:, :, t])
-            FrameRight.append(np.zeros((2, len(keypoints))))
+        # Get blobs right
+        blobs_right, frame_right = self.detect_blobs(img_right)
+        # Get blobs front
+        blobs_front, frame_front = self.detect_blobs(img_front)
+        # Get blobs right
+        blobs_tl, frame_tl = self.detect_blobs(img_tl)
 
-            for n in range(len(keypoints)):
-                FrameRight[t][:, n] = keypoints[n].pt
-                if len(BlobsRight) == 0:
-                    # If no blobs saved, then save the first LED detected
-                    BlobsRight.append({'p': FrameRight[t][:, n], 'N': 1, 'Signal': np.zeros(imRight.shape[2])})
-                    BlobsRight[-1]['Signal'][t] = 1
-                else:
-                    # Thereafter, check whether the detected LED belongs to a blob
-                    Distance = np.empty(len(BlobsRight))
-                    for k in range(len(BlobsRight)):
-                        Distance[k] = np.linalg.norm(BlobsRight[k]['p'] - FrameRight[t][:, n])
-                    if np.min(Distance) < self.DTOL:
-                        if BlobsRight[np.argmin(Distance)]['Signal'][t] == 0:
-                            BlobsRight[np.argmin(Distance)]['N'] += 1
-                            BlobsRight[np.argmin(Distance)]['Signal'][t] = 1
-                    else:
-                        BlobsRight.append({'p': FrameRight[t][:, n], 'N': 1, 'Signal': np.zeros(imRight.shape[2])})
-                        BlobsRight[-1]['Signal'][t] = 1
+        radius = self.DTOL/2.0
 
-            # Iterate Front
-            # Detect blobs.
-            keypoints = self.detector_car.detect(imFront[:, :, t])
-            FrameFront.append(np.zeros((2, len(keypoints))))
-
-            for n in range(len(keypoints)):
-                FrameFront[t][:, n] = keypoints[n].pt
-                if len(BlobsFront) == 0:
-                    # If no blobs saved, then save the first LED detected
-                    BlobsFront.append({'p': FrameFront[t][:, n], 'N': 1, 'Signal': np.zeros(imFront.shape[2])})
-                    BlobsFront[-1]['Signal'][t] = 1
-                else:
-                    # Thereafter, check whether the detected LED belongs to a blob
-                    Distance = np.empty(len(BlobsFront))
-                    for k in range(len(BlobsFront)):
-                        Distance[k] = np.linalg.norm(BlobsFront[k]['p'] - FrameFront[t][:, n])
-                    if np.min(Distance) < self.DTOL:
-                        if BlobsFront[np.argmin(Distance)]['Signal'][t] == 0:
-                            BlobsFront[np.argmin(Distance)]['N'] += 1
-                            BlobsFront[np.argmin(Distance)]['Signal'][t] = 1
-                    else:
-                        BlobsFront.append({'p': FrameFront[t][:, n], 'N': 1, 'Signal': np.zeros(imFront.shape[2])})
-                        BlobsFront[-1]['Signal'][t] = 1
-
-            # Iterate TL
-            # Detect blobs.
-            keypoints = self.detector_tl.detect(imTL[:, :, t])
-            FrameTL.append(np.zeros((2, len(keypoints))))
-
-            for n in range(len(keypoints)):
-                FrameTL[t][:, n] = keypoints[n].pt
-                if len(BlobsTL) == 0:
-                    # If no blobs saved, then save the first LED detected
-                    BlobsTL.append(
-                        {'p': FrameTL[t][:, n], 'N': 1, 'Signal': np.zeros(imTL.shape[2])})
-                    BlobsTL[-1]['Signal'][t] = 1
-                else:
-                    # Thereafter, check whether the detected LED belongs to a blob
-                    Distance = np.empty(len(BlobsTL))
-                    for k in range(len(BlobsTL)):
-                        Distance[k] = np.linalg.norm(BlobsTL[k]['p'] - FrameTL[t][:, n])
-                    if np.min(Distance) < self.DTOL:
-                        if BlobsTL[np.argmin(Distance)]['Signal'][t] == 0:
-                            BlobsTL[np.argmin(Distance)]['N'] += 1
-                            BlobsTL[np.argmin(Distance)]['Signal'][t] = 1
-                    else:
-                        BlobsTL.append(
-                            {'p': FrameTL[t][:, n], 'N': 1, 'Signal': np.zeros(imTL.shape[2])})
-                        BlobsTL[-1]['Signal'][t] = 1
-
-        # Extract blobs (right)
-        keypointBlobRight = []
-        radiusRight       = self.DTOL/2.0
-        for k in range(len(BlobsRight)):
-            assert np.sum(BlobsRight[k]['Signal']) == BlobsRight[k]['N']
-            keypointBlobRight.append(cv2.KeyPoint(BlobsRight[k]['p'][0], BlobsRight[k]['p'][1], radiusRight))
-
-        # Extract blobs (front)
-        keypointBlobFront = []
-        radiusFront       = self.DTOL/2.0
-        for k in range(len(BlobsFront)):
-            assert np.sum(BlobsFront[k]['Signal']) == BlobsFront[k]['N']
-            keypointBlobFront.append(cv2.KeyPoint(BlobsFront[k]['p'][0], BlobsFront[k]['p'][1], radiusFront))
-
-        # Extract blobs (TL)
-        keypointBlobTL = []
-        radiusTL       = self.DTOL/2.0
-        for k in range(len(BlobsTL)):
-            assert np.sum(BlobsTL[k]['Signal']) == BlobsTL[k]['N']
-            keypointBlobTL.append(cv2.KeyPoint(BlobsTL[k]['p'][0], BlobsTL[k]['p'][1], radiusTL))
+        # Extract blobs
+        keypoint_blob_right = self.extract_blobs(blobs_right, radius)
+        keypoint_blob_front = self.extract_blobs(blobs_front, radius)
+        keypoint_blob_tl = self.extract_blobs(blobs_tl, radius)
 
         # Images
-        imPublishRight = cv2.drawKeypoints(imRight[:,:,-1], keypointBlobRight, np.array([]), (0,0,255), cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
-        imPublishFront = cv2.drawKeypoints(imFront[:,:,-1], keypointBlobFront, np.array([]), (0,0,255), cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
-        imPublishTL    = cv2.drawKeypoints(imTL[:,:,-1], keypointBlobTL, np.array([]),(0,0,255), cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
+        img_pub_right = cv2.drawKeypoints(img_right[:, :, -1], keypoint_blob_right, np.array([]), (0, 0, 255),
+                                          cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
+        img_pub_front = cv2.drawKeypoints(img_front[:, :, -1], keypoint_blob_front, np.array([]), (0, 0, 255),
+                                          cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
+        img_pub_tl = cv2.drawKeypoints(img_tl[:, :, -1], keypoint_blob_tl, np.array([]), (0, 0, 255),
+                                       cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
 
         # Initialize detection
         self.right = SignalsDetection.NO_CAR
@@ -346,164 +238,188 @@ class LEDDetectorNode(object):
         result = LEDDetectionArray()
 
         # Sampling time
-        T = (1.0*self.capture_time)/(1.0*NIm)
+        t_s = (1.0*self.capture_time)/(1.0*num_img)
 
-        # Decide whether LED or not (right)
-        for i in range(len(BlobsRight)):
-            #rospy.loginfo('[%s] Detection on the right' % (self.node_name))
-            # Detection
-            detected,result,freq_identified, fft_peak_freq = self.detect_blob(BlobsRight[i],T,NIm,H,W,self.cropNormalizedRight,timestamps,result)
-
-            # Take decision
-            if detected:
-
-                #print '-------------------'
-                #print("NIm = %d " % NIm)
-                #print("T = %f " % T)
-                #print("fft_peak_freq = %f " % fft_peak_freq)
-                #print("freq_identified = %f " % freq_identified)
-                #print '-------------------'
-
-
-                if freq_identified == self.freqIdentify[1]:
-                    self.right = SignalsDetection.SIGNAL_PRIORITY
-                elif freq_identified == self.freqIdentify[2]:
-                    self.right = SignalsDetection.SIGNAL_SACRIFICE_FOR_PRIORITY
-                else:
-                    self.right = SignalsDetection.SIGNAL_A
-                break
-
-        # Decide whether LED or not (front)
-        for i in range(len(BlobsFront)):
-            #rospy.loginfo('[%s] Detection on the front' % (self.node_name))
-            # Detection
-            detected, result,freq_identified, fft_peak_freq  = self.detect_blob(BlobsFront[i],T,NIm,H,W,self.cropNormalizedFront,timestamps,result)
-
-            # Take decision
-            if detected:
-
-                #print '-------------------'
-                #print("NIm = %d " % NIm)
-                #print("T = %f " % T)
-                #print("fft_peak_freq = %f " % fft_peak_freq)
-                #print("freq_identified = %f " % freq_identified)
-                #print '-------------------'
-
-                if freq_identified == self.freqIdentify[1]:
-                    self.front = SignalsDetection.SIGNAL_PRIORITY
-                elif freq_identified == self.freqIdentify[2]:
-                    self.front = SignalsDetection.SIGNAL_SACRIFICE_FOR_PRIORITY
-                else:
-                    self.front = SignalsDetection.SIGNAL_A
-                break
-
-        # Decide whether LED or not (traffic light)
-        for i in range(len(BlobsTL)):
-            #rospy.loginfo('[%s] Detection of the traffic light' % (self.node_name))
-            # Detection
-            detected, result,freq_identified, fft_peak_freq  = self.detect_blob(BlobsTL[i],T,NIm,H,W,self.cropNormalizedTL,timestamps,result)
-            # Take decision
-            if detected:
-                self.traffic_light = SignalsDetection.GO
-                break
-            else:
-                self.traffic_light = SignalsDetection.STOP
+        # Decide whether LED or not
+        self.right = self.is_led(blobs_right, t_s, num_img, h, w,
+                                 self.parameters['~crop_params']['cropNormalizedRight'], timestamps, result)
+        self.front = self.is_led(blobs_right, t_s, num_img, h, w,
+                                 self.parameters['~crop_params']['cropNormalizedFront'], timestamps, result)
+        self.traffic_light = self.is_led(blobs_right, t_s, num_img, h, w,
+                                         self.parameters['~crop_params']['cropNormalizedTL'], timestamps, result)
 
         # Left bot (also UNKNOWN)
         self.left = "UNKNOWN"
 
         # Final time
         processing_time = time.time()-tic
-        total_time      = time.time()-self.tinit
+        total_time = time.time() - self.t_init
 
         # Publish results
-        self.publish(imPublishRight,imPublishFront,imPublishTL,result)
+        self.publish(img_pub_right, img_pub_front, img_pub_tl, result)
 
         # Print performance
-        #rospy.loginfo('[%s] Detection completed. Processing time: %.2f s. Total time:  %.2f s' %(self.node_name,processing_time,total_time))
+        # self.log('[%s] Detection completed. Processing time: %.2f s. Total time:  %.2f s' %(self.node_name,
+        #                                                                                    processing_time,
+        #                                                                                    total_time))
 
         # Keep going
         if self.continuous:
             self.trigger = True
-            self.sub_cam = rospy.Subscriber("camera_node/image/compressed",CompressedImage, self.camera_callback)
+            self.sub_cam = rospy.Subscriber("camera_node/image/compressed", CompressedImage, self.camera_callback)
 
-    def detect_blob(self,Blob,T,NIm,H,W,crop,timestamps,result):
+    def get_blobs(self, images):
+
+        blobs = []
+        frame = []
+        # Iterate over time
+        num_images = len(images)
+        for t in range(num_images):
+            keypoints = self.detector.detect(images[:, :, t])
+            frame.append(np.zeros((2, len(keypoints))))
+
+            for n in range(len(keypoints)):
+                frame[t][:, n] = keypoints[n].pt
+                if len(blobs) == 0:
+                    # If no blobs saved, then save the first LED detected
+                    blobs.append({'p': frame[t][:, n], 'N': 1, 'Signal': np.zeros(images.shape[2])})
+                    blobs[-1]['Signal'][t] = 1
+                else:
+                    # Thereafter, check whether the detected LED belongs to a blob
+                    dist = np.empty(len(blobs))
+                    for k in range(len(blobs)):
+                        dist[k] = np.linalg.norm(blobs[k]['p'] - blobs[t][:, n])
+                    if np.min(dist) < self.DTOL:
+                        if blobs[np.argmin(dist)]['Signal'][t] == 0:
+                            blobs[np.argmin(dist)]['N'] += 1
+                            blobs[np.argmin(dist)]['Signal'][t] = 1
+                    else:
+                        blobs.append({'p': frame[t][:, n], 'N': 1, 'Signal': np.zeros(images.shape[2])})
+                        blobs[-1]['Signal'][t] = 1
+
+        return blobs, frame
+
+    def extract_blobs(self, blobs, radius):
+        # Extract blobs
+        keypoint_blob = []
+        for k in range(len(blobs)):
+            assert np.sum(blobs[k]['Signal']) == blobs[k]['N']
+            keypoint_blob.append(cv2.KeyPoint(blobs[k]['p'][0], blobs[k]['p'][1], radius))
+        return keypoint_blob
+
+    def is_led(self, blobs, t_s, num_img, h, w, cropping, timestamps, result):
+        # Decide whether LED or not (right)
+        for i in range(len(blobs)):
+            # self.log('[%s] Detection on the right' % (self.node_name))
+            # Detection
+            detected, result, freq_identified, fft_peak_freq = self.detect_blob(blobs[i], t_s, num_img, h, w,
+                                                                                cropping, timestamps, result)
+            # Take decision
+            if detected:
+                # print '-------------------'
+                # print("num_img = %d " % num_img)
+                # print("t_samp = %f " % t_samp)
+                # print("fft_peak_freq = %f " % fft_peak_freq)
+                # print("freq_identified = %f " % freq_identified)
+                # print '-------------------'
+
+                if freq_identified == self.freqIdentify[3]:
+                    detected = SignalsDetection.SIGNAL_PRIORITY
+                elif freq_identified == self.freqIdentify[4]:
+                    detected = SignalsDetection.SIGNAL_SACRIFICE_FOR_PRIORITY
+                else:
+                    detected = SignalsDetection.SIGNAL_A
+
+                return detected
+
+    def detect_blob(self, blob, t_s, num_img, h, w, crop, timestamps, result):
         # Percentage of appearance
-        apperance_percentage = (1.0*Blob['N'])/(1.0*NIm)
+        appearance_percentage = (1.0*blob['N'])/(1.0*num_img)
 
         # Frequency estimation based on FFT
-        f              = np.arange(0.0,1.0*NIm+1.0,2.0)
-        signal_f       = scipy.fftpack.fft(Blob['Signal']-np.mean(Blob['Signal']))
-        y_f            = 2.0/NIm*np.abs(signal_f[:NIm/2+1])
-        fft_peak_freq  = 1.0*np.argmax(y_f)/(NIm*T)
-        #half_freq_dist = 0.8 #1.0*f[1]/2
+        f = np.arange(0.0, 1.0*num_img+1.0, 2.0)
+        signal_f = scipy.fftpack.fft(blob['Signal']-np.mean(blob['Signal']))
+        y_f = 2.0/num_img*np.abs(signal_f[:num_img/2+1])
+        fft_peak_freq = 1.0*np.argmax(y_f)/(num_img*t_s)
+        # half_freq_dist = 0.8 #1.0*f[1]/2
 
-        #rospy.loginfo('[%s] Appearance perc. = %s, frequency = %s' % (self.node_name, apperance_percentage, fft_peak_freq))
+        # self.log('[%s] Appearance perceived. = %s, frequency = %s' %
+        #          (self.node_name, appearance_percentage, fft_peak_freq))
         freq_identified = 0
         # Take decision
         detected = False
         for i in range(len(self.freqIdentify)):
-            if  (apperance_percentage < 0.8 and apperance_percentage > 0.2 and not self.useFFT) or (self.useFFT and abs(fft_peak_freq-self.freqIdentify[i]) < 0.35):
+            if ((0.8 > appearance_percentage > 0.2 and not self.useFFT) or
+                    (self.useFFT and abs(fft_peak_freq - self.freqIdentify[i]) < 0.35)):
                 # Decision
                 detected = True
                 freq_identified = self.freqIdentify[i]
                 # Raw detection
-                coord_norm = Vector2D(1.0*(crop[1][0]+Blob['p'][0])/W, 1.0*(crop[0][0]+Blob['p'][1])/H)
-                result.detections.append(LEDDetection(rospy.Time.from_sec(timestamps[0]),rospy.Time.from_sec(timestamps[-1]),coord_norm,fft_peak_freq,'',-1,timestamps,signal_f,f,y_f))
+                coord_norm = Vector2D(1.0*(crop[1][0]+blob['p'][0])/w, 1.0*(crop[0][0]+blob['p'][1])/h)
+                result.detections.append(LEDDetection(rospy.Time.from_sec(timestamps[0]),
+                                                      rospy.Time.from_sec(timestamps[-1]),
+                                                      coord_norm, fft_peak_freq, '', -1, timestamps, signal_f, f, y_f))
 
         return detected, result, freq_identified, fft_peak_freq
 
-    def publish(self,imRight,imFront,imTL,results):
+    def publish(self, img_right, img_front, img_tl, results):
         #  Publish image with circles
-        imRightCircle_msg = self.bridge.cv2_to_imgmsg(imRight,encoding="passthrough")
-        imFrontCircle_msg = self.bridge.cv2_to_imgmsg(imFront,encoding="passthrough")
-        imTLCircle_msg    = self.bridge.cv2_to_imgmsg(imTL,encoding="passthrough")
+        img_right_circle_msg = self.bridge.cv2_to_imgmsg(img_right, encoding="passthrough")
+        img_front_circle_msg = self.bridge.cv2_to_imgmsg(img_front, encoding="passthrough")
+        img_tl_circle_msg = self.bridge.cv2_to_imgmsg(img_tl, encoding="passthrough")
 
         # Publish image
-        self.pub_image_right.publish(imRightCircle_msg)
-        self.pub_image_front.publish(imFrontCircle_msg)
-        self.pub_image_TL.publish(imTLCircle_msg)
+        self.pub_image_right.publish(img_right_circle_msg)
+        self.pub_image_front.publish(img_front_circle_msg)
+        self.pub_image_TL.publish(img_tl_circle_msg)
 
         # Publish results
         self.pub_raw_detections.publish(results)
 
         # Publish debug
         debug_msg = LEDDetectionDebugInfo()
-        debug_msg.cell_size          = self.cell_size
-        debug_msg.crop_rect_norm     = self.crop_rect_norm
+        debug_msg.cell_size = self.cell_size
+        debug_msg.crop_rect_norm = self.crop_rect_norm
         debug_msg.led_all_unfiltered = results
-        debug_msg.state              = 0
+        debug_msg.state = 0
         self.pub_debug.publish(debug_msg)
 
-        # Loginfo (right)
+        # Log info (right)
         if self.right != SignalsDetection.NO_CAR:
-            rospy.loginfo('Right: LED detected')
+            self.log('Right: LED detected')
         else:
-            rospy.loginfo('Right: No LED detected')
+            self.log('Right: No LED detected')
 
-        # Loginfo (front)
+        # Log info (front)
         if self.front != SignalsDetection.NO_CAR:
-            rospy.loginfo('Front: LED detected')
+            self.log('Front: LED detected')
         else:
-            rospy.loginfo('Front: No LED detected')
+            self.log('Front: No LED detected')
 
-        # Loginfo (TL)
+        # Log info (TL)
         if self.traffic_light == SignalsDetection.STOP:
-            rospy.loginfo('[%s] Traffic Light: red' %(self.node_name))
+            self.log('[%s] Traffic Light: red' % self.node_name)
         elif self.traffic_light == SignalsDetection.GO:
-            rospy.loginfo('[%s] Traffic Light: green' %(self.node_name))
+            self.log('[%s] Traffic Light: green' % self.node_name)
         else:
-            rospy.loginfo('[%s] No traffic light' %(self.node_name))
+            self.log('[%s] No traffic light' % self.node_name)
 
-        #Publish
-        rospy.loginfo("[%s] The observed LEDs are:\n Front = %s\n Right = %s\n Traffic light state = %s" % (self.node_name, self.front, self.right, self.traffic_light))
-        self.pub_detections.publish(SignalsDetection(front=self.front, right=self.right, left=self.left, traffic_light_state=self.traffic_light))
+        # Publish
+        self.log("[%s] The observed LEDs are:\n Front = %s\n Right = %s\n Traffic light state = %s" %
+                 (self.node_name, self.front, self.right, self.traffic_light))
+        self.pub_detections.publish(SignalsDetection(front=self.front,
+                                                     right=self.right,
+                                                     left=self.left,
+                                                     traffic_light_state=self.traffic_light))
 
     def send_state(self, msg):
         msg.state = self.node_state
         self.pub_debug.publish(msg)
 
+
 if __name__ == '__main__':
-    rospy.init_node('led_detector_node',anonymous=False)
-    node = LEDDetectorNode()
+    rospy.spin()
+    # Initialize the node
+    camera_node = LEDDetectorNode(node_name='led_detector_node')
+    # Keep it spinning to keep the node alive
     rospy.spin()

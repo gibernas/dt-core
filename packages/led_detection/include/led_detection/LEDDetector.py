@@ -1,6 +1,5 @@
 import numpy as np
 
-from api import LEDDetector
 from duckietown_msgs.msg import Vector2D, LEDDetection, LEDDetectionArray, LEDDetectionDebugInfo
 from sensor_msgs.msg import CompressedImage
 from led_detection import logger
@@ -11,7 +10,6 @@ from scipy.ndimage.filters import maximum_filter
 from scipy.ndimage.morphology import generate_binary_structure, binary_erosion
 
 import rospy
-import time
 
 # plotting
 import matplotlib.pyplot as plt
