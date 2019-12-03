@@ -2,12 +2,11 @@
 <package>
   <name>led_pattern_switch</name>
   <version>1.0.0</version>
-  <description>Does something related to changing the LED patters based on FSM state</description>
+  <description>Request an LED pattern change based on FSM state</description>
 
   <maintainer email='acensi@idsc.mavt.ethz.ch'>Andrea Censi</maintainer>
 
   <license>GPLv3</license>
-
 
   <buildtool_depend>catkin</buildtool_depend>
 

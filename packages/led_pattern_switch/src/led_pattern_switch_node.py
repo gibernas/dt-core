@@ -1,59 +1,57 @@
 #!/usr/bin/env python
 import rospy
-from duckietown_msgs.msg import Twist2DStamped, FSMState
+from duckietown_msgs.msg import FSMState
 from std_msgs.msg import String
 
 from duckietown_msgs.srv import ChangePattern
+from duckietown import DTROS
 
-class LEDPatternSwitchNode(object):
-    def __init__(self):
-        self.node_name = rospy.get_name()
-        # rospy.loginfo("[%s] Initializing " %(self.node_name))
+
+class LEDPatternSwitchNode(DTROS):
+    def __init__(self, node_name):
+
+        # Initialize the DTROS parent class
+        super(LEDPatternSwitchNode, self).__init__(node_name=node_name)
+        self.log("Initializing... ")
+
         # Read parameters
         self.mappings = rospy.get_param("~mappings")
         source_topic_dict = rospy.get_param("~source_topics")
-        self.current_src_name = "joystick" # by default if fsm is missing
+        self.current_src_name = "joystick"  # by default if fsm is missing
 
         # Construct publisher
-        # self.pub_cmd = rospy.Publisher("~change_color_pattern",String,queue_size=1)
         self.changePattern = rospy.ServiceProxy("~set_pattern",
                                                 ChangePattern)
-
         
         # Construct subscribers
-        self.sub_fsm_state = rospy.Subscriber(rospy.get_param("~mode_topic"),FSMState,self.cbFSMState)
+        self.sub_fsm_state = rospy.Subscriber(rospy.get_param("~mode"), FSMState, self.cbFSMState)
 
         self.sub_dict = dict()
         for src_name, topic_name in source_topic_dict.items():
-            self.sub_dict[src_name] = rospy.Subscriber(topic_name,String,self.msgincb,callback_args=src_name)
+            self.sub_dict[src_name] = rospy.Subscriber(topic_name, String, self.cbMsgIn, callback_args=src_name)
 
-        rospy.loginfo("[%s] Initialized. " %(self.node_name))
+        self.log("Initialized. ")
 
-    def cbFSMState(self,fsm_state_msg):
+    def cbFSMState(self, fsm_state_msg):
         self.current_src_name = self.mappings.get(fsm_state_msg.state)
         if self.current_src_name is None:
-            rospy.logwarn("[%s] FSMState %s not handled. No msg pass through the switch." %(self.node_name,fsm_state_msg.state))
+            self.log("FSMState %s not handled. No msg pass through the switch." % fsm_state_msg.state, 'warn')
         else: 
-            rospy.loginfo("[%s] Led pattern switched to %s in state %s." %(self.node_name,self.current_src_name,fsm_state_msg.state))
+            self.log("Led pattern switched to %s in state %s." % (self.current_src_name, fsm_state_msg.state))
 
-    def msgincb(self,msg,src_name):
+    def cbMsgIn(self, msg, src_name):
 
         if src_name == self.current_src_name:
-            rospy.loginfo("[%s] %s callback matches, publishing %s"%(self.node_name,src_name, msg.data))
-            # self.pub_cmd.publish(msg)
+            self.log("%s callback matches, publishing %s" % (src_name, msg.data))
             self.changePattern(msg)
-        #else:
-            #rospy.loginfo("[%s] %s callback does not match, not publishing"%(self.node_name,src_name))
+        # else:
+            # self.log("[%s] %s callback does not match, not publishing"%(self.node_name,src_name), 'warn')
 
-    def on_shutdown(self):
-        rospy.loginfo("[%s] Shutting down." %(self.node_name))
 
 if __name__ == '__main__':
-    # Initialize the node with rospy
-    rospy.init_node('LED_pattern_switch_node', anonymous=False)
-    # Create the DaguCar object
-    node = LEDPatternSwitchNode()
-    # Setup proper shutdown behavior 
-    rospy.on_shutdown(node.on_shutdown)
+    # Initialize the node
+    led_pattern_switch_node = LEDPatternSwitchNode(node_name='led_pattern_switch')
+    # Setup proper shutdown behavior
+    rospy.on_shutdown(led_pattern_switch_node.onShutdown)
     # Keep it spinning to keep the node alive
     rospy.spin()
