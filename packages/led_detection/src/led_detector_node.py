@@ -11,7 +11,7 @@ from duckietown_utils.bag_logs import numpy_from_ros_compressed
 
 from std_msgs.msg import Byte
 from duckietown_msgs.msg import Vector2D, LEDDetection, LEDDetectionArray, LEDDetectionDebugInfo, BoolStamped, SignalsDetection
-from sensor_msgs.msg import CompressedImage, Image
+from sensor_msgs.msg import CompressedImage
 
 
 class LEDDetectorNode(DTROS):
@@ -32,6 +32,7 @@ class LEDDetectorNode(DTROS):
         self.parameters['~blob_detector_db'] = None
         self.parameters['~blob_detector_tl'] = None
         self.parameters['~verbose'] = None
+        self.parameters['~cell_size'] = None
         self.updateParameters()
 
         self.active = True  # [INTERACTIVE MODE] Won't be overwritten if FSM isn't running, node always active
@@ -64,9 +65,9 @@ class LEDDetectorNode(DTROS):
 
         # Publishers
         self.pub_raw_detections = rospy.Publisher("~raw_led_detection", LEDDetectionArray,queue_size=1)
-        self.pub_image_right = rospy.Publisher("~image_detection_right", Image, queue_size=1)
-        self.pub_image_front = rospy.Publisher("~image_detection_front", Image, queue_size=1)
-        self.pub_image_TL = rospy.Publisher("~image_detection_TL", Image, queue_size=1)
+        self.pub_image_right = rospy.Publisher("~image_detection_right/compressed", CompressedImage, queue_size=1)
+        self.pub_image_front = rospy.Publisher("~image_detection_front/compressed", CompressedImage, queue_size=1)
+        self.pub_image_TL = rospy.Publisher("~image_detection_TL/compressed", CompressedImage, queue_size=1)
         self.pub_detections = rospy.Publisher("~led_detection", SignalsDetection, queue_size=1)
         self.pub_debug = rospy.Publisher("~debug_info", LEDDetectionDebugInfo, queue_size=1)
 
@@ -80,10 +81,6 @@ class LEDDetectorNode(DTROS):
 
         # Detect continuously as long as active [INTERACTIVE MODE] set to False for manual trigger
         self.continuous = rospy.get_param('~continuous', False)
-
-        # Cell size (needed for visualization)
-        self.cell_size = rospy.get_param("~cell_size")
-        self.crop_rect_norm = rospy.get_param("~crop_rect_normalized")
 
         # Get frequency to identify
         self.freqIdentify = self.protocol['frequencies'].values()
@@ -364,9 +361,9 @@ class LEDDetectorNode(DTROS):
     def publish(self, img_right, img_front, img_tl, results):
         #  Publish image with circles if verbose is > 0
         if self.parameters['~verbose'] > 0:
-            img_right_circle_msg = self.bridge.cv2_to_imgmsg(img_right, encoding="bgr8")
-            img_front_circle_msg = self.bridge.cv2_to_imgmsg(img_front, encoding="bgr8")
-            img_tl_circle_msg = self.bridge.cv2_to_imgmsg(img_tl, encoding="bgr8")
+            img_right_circle_msg = self.bridge.cv2_to_compressed_imgmsg(img_right) # , encoding="bgr8")
+            img_front_circle_msg = self.bridge.cv2_to_compressed_imgmsg(img_front) # , encoding="bgr8")
+            img_tl_circle_msg = self.bridge.cv2_to_compressed_imgmsg(img_tl) # , encoding="bgr8")
 
             # Publish image
             self.pub_image_right.publish(img_right_circle_msg)
@@ -375,8 +372,8 @@ class LEDDetectorNode(DTROS):
 
             # Publish debug
             debug_msg = LEDDetectionDebugInfo()
-            debug_msg.cell_size = self.cell_size
-            debug_msg.crop_rect_norm = self.crop_rect_norm
+            debug_msg.cell_size = self.parameters['~cell_size']
+            debug_msg.crop_rect_norm = self.parameters['~crop_params']
             debug_msg.led_all_unfiltered = results
             debug_msg.state = 0
             self.pub_debug.publish(debug_msg)

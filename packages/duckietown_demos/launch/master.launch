@@ -69,7 +69,6 @@
 <arg name="/LED/pattern_switch" default="false" />
 <arg name="/LED/detector" default="false" />
 <arg name="/LED/joystick" default="false" />
-<arg name="/LED/interpreter" default="false" />
 
 <arg name="odometry_learning" default="false"/>
 <arg name="/odometry_learning/kinematics" default="true"/>
@@ -419,7 +418,6 @@
 	<group if="$(arg /LED/detector)">
 		<include file="$(find led_detection)/launch/led_detection.launch">
 			<arg name="veh" value="$(arg veh)"/>
-			<arg name="config" value="$(arg config)"/>
 			<arg name="param_file_name" value="$(arg param_file_name)"/>
 		</include>
 	</group>
@@ -442,18 +440,6 @@
 		<include file="$(find led_pattern_switch)/launch/led_pattern_switch_node.launch">
 			<arg name="veh" value="$(arg veh)"/>
 			<arg name="param_file_name" value="$(arg param_file_name)"/>
-		</include>
-	</group>
-
-	<!-- not LF, not IN -->
-	<!-- TODO do we need some remappings here? -->
-	<remap from="LED_interpreter_node/raw_led_detection" to="led_detector_node/raw_led_detection" />
-	<group if="$(arg /LED/interpreter)">
-		<include file="$(find led_interpreter)/launch/LED_interpreter.launch">
-			<arg name="veh" value="$(arg veh)"/>
-			<arg name="config" value="$(arg config)"/>
-			<arg name="param_file_name" value="$(arg param_file_name)"/>
-			<arg name="intersectionType" value="$(arg intersectionType)" />
 		</include>
 	</group>
 
@@ -513,20 +499,6 @@
  			<arg name="use_priority_protocol" value="$(arg use_priority_protocol)" />
 
 		</include>
-	</group>
-
-	<!-- not LF, not IN -->
-	<!-- Start Implicit Coordination -->
-	<group if="$(arg /coordination/implicit_coordination)">
-			<!-- Vehicle Coordinator-->
-			<include file="$(find implicit_coordination)/launch/implicit.launch">
-				<arg name="veh" value="$(arg veh)"/>
-			</include>
-
-			<remap from="implicit_coordination_node/fsm" to="fsm_node/mode" />
-			<remap from="implicit_coordination_node/vehicle_detection_node" to="multivehicle_tracker_node/tracking" />
-			<remap from="implicit_coord/flag_go_wait" to="implicit_coordination_node/flag_intersection_wait_go_implicit" /> -->
-			<!--remap from="simple_coordinator_node/change_color_pattern" to="led_emitter_node/change_color_pattern" /-->
 	</group>
 
 	<!-- not LF, not IN -->

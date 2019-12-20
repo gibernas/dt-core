@@ -69,7 +69,7 @@ class UnicornIntersectionNode(object):
 
         sleeptimes = [self.time_left_turn, self.time_straight_turn, self.time_right_turn]
         LFparams = [self.LFparams_left, self.LFparams_straight, self.LFparams_right]
-        omega_ffs = [self.ff_left, self.ff_straight, self.ff_right]
+        # omega_ffs = [self.ff_left, self.ff_straight, self.ff_right]
         omega_maxs = [self.omega_max_left, self.omega_max_straight, self.omega_max_right]
         omega_mins = [self.omega_min_left, self.omega_min_straight, self.omega_min_right]
 

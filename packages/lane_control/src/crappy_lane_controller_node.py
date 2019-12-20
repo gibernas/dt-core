@@ -481,9 +481,7 @@ class lane_controller(object):
         car_control_msg.v = car_control_msg.v * self.velocity_to_m_per_s
         omega = omega * self.omega_to_rad_per_s
 
-        if omega > self.omega_max: omega = self.omega_max
-        if omega < self.omega_min: omega = self.omega_min
-        omega += self.omega_ff
+
         car_control_msg.omega = omega
         self.publishCmd(car_control_msg)
         self.last_ms = currentMillis

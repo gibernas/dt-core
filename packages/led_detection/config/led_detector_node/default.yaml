@@ -2,6 +2,7 @@ capture_time: 0.5
 DTOL: 15
 useFFT: True
 freqIdentity: []
+cell_size: [18, 18]
 
 crop_params:
   cropNormalizedRight: [[0.1, 0.67], [0.6, 1.0]]
